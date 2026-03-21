@@ -2,20 +2,13 @@ const express = require('express');
 const router = require('./routes/userRoutes');
 const app = express();
 const logger = require('./middleware/logger');
+const errorHandler = require('./middleware/errorHandler');
 
 app.use(express.json());
 app.use(logger);
+app.use(errorHandler);
 app.use('/users', router);
 
-const pool = require('./db');
-
-pool.query('SELECT NOW()', (err, res) => {
-  if (err) {
-    console.error(err);
-  } else {
-    console.log(res.rows);
-  }
-});
 
 app.listen(3000, (err) => {
     if(!err) console.log("server running");
