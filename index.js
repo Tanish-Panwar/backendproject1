@@ -9,7 +9,6 @@ app.use(logger);
 app.use(errorHandler);
 app.use('/users', router);
 
-
 app.listen(3000, (err) => {
     if(!err) console.log("server running");
     else console.log(err.message);
