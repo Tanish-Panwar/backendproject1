@@ -3,6 +3,7 @@ const asyncHandler = require('../utils/asyncHandler');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
+const redisClient = require('../config/redis');
 
 // CREATE USER Register.
 exports.register = asyncHandler(async (req, res) => {
@@ -72,3 +73,29 @@ exports.userInfo = asyncHandler(async (req, res) => {
         data: user.rows[0],
     });
 });
+
+
+exports.getUsers = asyncHandler( async (req, res) => {
+    const cacheKey = "users:all";
+
+    const cachedData = await redisClient.get(cacheKey);
+
+    if(cachedData) {
+        return res.status(200).json({
+            success: true,
+            data: JSON.parse(cachedData),
+            source: "cache"
+        })
+    }
+
+    const result = await pool.query(`SELECT id, name, email, created_at from users`);
+
+    await redisClient.setEx(cacheKey, 120, JSON.stringify(result.rows));
+
+
+    res.json({
+        success: true,
+        data: result.rows,
+        source: "db"
+    })
+})
