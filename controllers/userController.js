@@ -24,7 +24,7 @@ exports.register = asyncHandler(async (req, res) => {
 
     // 🔥 Invalidate caches
     try {
-        await redisClient.del("users:all"); // clear list cache
+        await redisClient.flushAll(); // clear full cache
     } catch (err) {
         console.error("Redis DEL failed:", err);
     }
@@ -40,7 +40,7 @@ exports.register = asyncHandler(async (req, res) => {
 exports.login = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
 
-    const result = await pool.query(
+    const result = await pool.query( // Already Used Indexing in DB for faster lookups.
         `SELECT * FROM users WHERE email = $1`,
         [email.toLowerCase().trim()]
     );
@@ -114,7 +114,10 @@ exports.userInfo = asyncHandler(async (req, res) => {
 
 // GET ALL USERS (with Redis)
 exports.getUsers = asyncHandler(async (req, res) => {
-    const cacheKey = "users:all";
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+    const cursor = parseInt(req.query.cursor) || 0;
+
+    const cacheKey = `users:${req.user.id}:cursor:${cursor}:limit:${limit}`;
 
     let cachedData;
 
@@ -133,19 +136,23 @@ exports.getUsers = asyncHandler(async (req, res) => {
     }
 
     const result = await pool.query(
-        `SELECT id, name, email, created_at FROM users`
+        `SELECT id, name, email, created_at FROM users WHERE id > $1 ORDER BY id LIMIT $2`,
+        [cursor, limit]
     );
+
+    const users = result.rows;
 
     // 🔥 Cache list
     try {
-        await redisClient.setEx(cacheKey, 120, JSON.stringify(result.rows));
+        await redisClient.setEx(cacheKey, 120, JSON.stringify(users));
     } catch (err) {
         console.error("Redis SET failed:", err);
     }
 
     res.json({
         success: true,
-        data: result.rows,
+        data: users,
+        nextCursor: users.length ? users[users.length -1].id : null,
         source: "db"
     });
 });
