@@ -1,4 +1,4 @@
-const {pool, query} = require('../db');
+const pool = require('../db');
 const asyncHandler = require('../utils/asyncHandler');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
@@ -16,7 +16,7 @@ exports.register = asyncHandler(async (req, res) => {
     const normalizedEmail = email.toLowerCase().trim();
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const result = await query(`
+    const result = await pool.query(`
         INSERT INTO users (name, email, password)
         VALUES ($1, $2, $3)
         RETURNING id, name, email
@@ -40,7 +40,7 @@ exports.register = asyncHandler(async (req, res) => {
 exports.login = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
 
-    const result = await query( // Already Used Indexing in DB for faster lookups.
+    const result = await pool.query( // Already Used Indexing in DB for faster lookups.
         `SELECT * FROM users WHERE email = $1`,
         [email.toLowerCase().trim()]
     );
@@ -90,7 +90,7 @@ exports.userInfo = asyncHandler(async (req, res) => {
         });
     }
 
-    const result = await query(
+    const result = await pool.query(
         'SELECT id, name, email FROM users WHERE id = $1',
         [userId]
     );
@@ -135,7 +135,7 @@ exports.getUsers = asyncHandler(async (req, res) => {
         });
     }
 
-    const result = await query(
+    const result = await pool.query(
         `SELECT id, name, email, created_at FROM users WHERE id > $1 ORDER BY id LIMIT $2`,
         [cursor, limit]
     );
