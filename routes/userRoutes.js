@@ -8,6 +8,6 @@ const authMiddleware = require('../middleware/auth');
 router.get('/', controller.login);
 router.post('/', controller.register);
 router.get('/me', authMiddleware, controller.userInfo);
-router.get('/all', controller.getUsers);
+router.get('/all', authMiddleware, controller.getUsers);
 
 module.exports = router;
