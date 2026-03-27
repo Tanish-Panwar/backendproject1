@@ -1,5 +1,5 @@
 const redisClient = require('../config/redis');
-const LIMIT = 100;
+const LIMIT = 10;
 const WINDOW = 60;
 
 exports.rateLimiter = async (req, res, next) => {
