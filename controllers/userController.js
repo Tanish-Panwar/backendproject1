@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const redisClient = require('../config/redis');
+const emailQueue = require('../queue/email_queue');
 
 // CREATE USER Register.
 exports.register = asyncHandler(async (req, res) => {
@@ -28,6 +29,12 @@ exports.register = asyncHandler(async (req, res) => {
     } catch (err) {
         console.error("Redis DEL failed:", err);
     }
+    
+    const user = result.rows[0];
+    await emailQueue.add('sendWelcomeEmail', {
+        email: user.email,
+        name: user.name,
+    })
 
     res.status(201).json({
         success: true,
