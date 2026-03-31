@@ -1,15 +1,26 @@
 const { Pool } = require('pg');
 
+// const pool = new Pool({
+//   connectionString: process.env.DATABASE_URL,
+//   ssl: {
+//     rejectUnauthorized: false, 
+//   },
+//   max: 10,
+//   idleTimeoutMillis: 30000,
+//   connectionTimeoutMillis: 5000,
+//   family: 4, 
+// });
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false, 
-  },
+  user: 'postgres',
+  host: 'localhost',
+  database: 'backend_db',
+  password: 'iamadminofall90@*.!',
+  port: 5432,
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
-  family: 4, 
-});
+  family: 4,
+})
 
 pool.on('acquire', () => console.log('📥 Connection acquired'));
 pool.on('remove', () => console.log('🔴 Connection removed'));
