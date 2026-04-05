@@ -2,3 +2,941 @@ PASSWORD: iamadminofall90@*.!
 PASSWORDHOME: 3/.%1Zh?>\xSBM[zRNzw'dnG${z]2f
 kopdevs530@suarj.com Suraj#@1
 yyyar56290@minitts.net Password#@1
+
+So lets start day 14, this is the code till now, we have made it till here, 
+{
+  "name": "day03_backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@socket.io/redis-adapter": "^8.3.0",
+    "bcrypt": "^6.0.0",
+    "bullmq": "^5.71.1",
+    "cloudinary": "^2.9.0",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "ioredis": "^5.10.1",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.1.1",
+    "nodemon": "^3.1.14",
+    "pg": "^8.20.0",
+    "redis": "^5.11.0",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
+    "streamifier": "^0.1.1",
+    "uuid": "^13.0.0"
+  }
+}
+index.js:
+// const express = require('express');
+// const router = require('./routes/userRoutes');
+// const uploadRouter = require('./routes/uploadRoutes');
+// const app = express();
+// const logger = require('./middleware/logger');
+// const errorHandler = require('./middleware/errorHandler');
+// const PORT = process.env.PORT || 3000;
+
+// app.use(express.json());
+// app.use(logger);
+// app.use(errorHandler);
+// app.use('/users', router);
+// app.use('/upload', uploadRouter);
+
+// app.listen(PORT, (err) => {
+//     if(!err) console.log("server running");
+//     else console.log(err.message);
+// })
+
+const express = require('express');
+const http = require('http');
+const router = require('./routes/userRoutes');
+const uploadRouter = require('./routes/uploadRoutes');
+const logger = require('./middleware/logger');
+const errorHandler = require('./middleware/errorHandler');
+const {initSocket} = require('./server/socket');
+const app = express();
+const server = http.createServer(app);
+
+initSocket(server);
+
+app.use(express.json());
+app.use(logger);
+
+app.use('/users', router);
+app.use('/upload', uploadRouter);
+
+app.use(errorHandler);
+
+const PORT = process.env.PORT || 3000;
+
+server.listen(PORT, ()=> {
+    console.log("Server + Socket running");
+})
+
+
+db.js:
+const { Pool } = require('pg');
+
+// const pool = new Pool({
+//   connectionString: process.env.DATABASE_URL,
+//   ssl: {
+//     rejectUnauthorized: false, 
+//   },
+//   max: 10,
+//   idleTimeoutMillis: 30000,
+//   connectionTimeoutMillis: 5000,
+//   family: 4, 
+// });
+const pool = new Pool({
+  user: 'postgres',
+  host: 'localhost',
+  database: 'backend_db',
+  password: 'iamadminofall90@*.!',
+  port: 5432,
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+  family: 4,
+})
+
+pool.on('acquire', () => console.log('📥 Connection acquired'));
+pool.on('remove', () => console.log('🔴 Connection removed'));
+
+module.exports = pool;
+
+.env:
+JWT_SECRET=secret_key
+PORT=3000
+DATABASE_URL=postgresql://postgres.lgugpaggpuwyymvakwiz:iamadminofall@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
+REDIS_URL=rediss://default:gQAAAAAAAUPeAAIncDJlMWVlYTdhYTQ3MTU0YzZiYTVlOTM4NDBmYjZjNjcyZXAyODI5MTA@discrete-swan-82910.upstash.io:6379
+CLOUDINARY_CLOUD_NAME=dapjfigk8
+CLOUDINARY_API_KEY=559775663611356
+CLOUDINARY_API_SECRET=Wd2y8zppredw1yGpACSglEP1Xhw
+
+
+ workers/image_worker:
+require('dotenv').config();
+const {Worker} = require("bullmq");
+const connection = require('../queue/connection');
+const {uploadToCloudinary} = require('../services/upload_service');
+const pool = require('../db');
+
+const worker = new Worker(
+    'imageQueue',
+    async (job) => {
+        const {userId, file} = job.data;
+        const buffer = Buffer.from(file, 'base64');
+        const result = await Promise.race([
+            uploadToCloudinary(buffer),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Upload timeout")), 10000),)
+        ]);
+
+        await pool.query(
+            `UPDATE users SET profile_image = $1 WHERE id = $2`,
+            [result.secure_url.replace('/upload', '/upload/q_auto,f_auto/'), userId]
+        );
+        console.log('Image Processed', result.secure_url.replace('/upload', '/upload/q_auto,f_auto/'));
+    },
+    {connection}
+);
+
+worker.on('active', job => {
+    console.log("JOB ACTIVE");
+})
+
+worker.on('completed', job => {
+    console.log(`Job ${job.id} completed`);
+})
+
+worker.on('failed', async (job, err) => {
+    console.error(`Job failed: ${err.message}`);
+    await connection.lpush(
+        'failed:imageQueue',
+        JSON.stringify({
+            jobId: job.id,
+            data: job.data,
+            error: err.message
+        })
+    );
+})
+
+workers/email_worker.js:
+const {Worker} = require('bullmq');
+const connection = require('../queue/connection');
+
+const worker = new Worker(
+    'emailQueue',
+    async (job) => {
+        console.log("Processing job:", job.name);
+        console.log("Data:", job.data);
+        await new Promise(res => setTimeout(res, 2000));
+        console.log(`Email sent to ${job.data.email}`);
+    },
+    {connection}
+);
+
+worker.on('completed', job => {
+    console.log(`Job ${job.id} completed`);
+})
+
+worker.on('failed', (job, err) => {
+    console.error(`Job failed: ${err.message}`);
+})
+
+utils/async_handler.js:
+module.exports = (fn) => {
+    return (req, res, next) => {
+        Promise.resolve(fn(req, res, next)).catch(next);
+    };
+};
+
+tests/socketTest.js:
+const {io} = require('socket.io-client');
+
+const socket = io('http://localhost:3000');
+
+socket.on("connect", () => {
+    console.log("Connected: ", socket.id);
+    socket.emit("join", 1);
+
+    setTimeout(() => {
+        for(let i=0; i<5; i++) {
+            socket.emit("send_message", {
+                from: 1,
+                to: 2,
+                message: "Spam" + i,
+            });
+        }
+    }, 2000);
+    setTimeout(() => {
+        socket.emit("typing", {
+            from: 1,
+            to: 2
+        });
+    }, 1000);
+});
+
+socket.on("receive_message", (data) => {
+    console.log("Message received:", data);
+})
+
+socket.on("typing", (data) => {
+    console.log("Typing:", data);
+})
+
+test/socketTest2.js:
+const {io} = require('socket.io-client');
+
+const socket = io('http://localhost:3000');
+
+socket.on("connect", () => {
+    console.log("Connected: ", socket.id);
+    socket.emit("join", 1);
+
+    socket.emit("join", 2);
+});
+
+socket.on("receive_message", (data) => {
+    console.log("Message received:", data);
+})
+
+socket.on("typing", (data) => {
+    console.log("Typing:", data);
+})
+
+service/upload_service.js:
+const cloudinary = require('../config/cloudinary');
+const streamifier = require('streamifier');
+
+exports.uploadToCloudinary = (fileBuffer) => {
+    return new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+            {
+                folder: "backend-pro",
+                resource_type: "image",
+                transformation: [
+                    {width: 500, height: 500, crop: "limit"},
+                    {quality: "auto"},
+                    {fetch_format: "auto"}
+                ]
+            },
+            (error, result) => {
+                if(result) resolve(result);
+                else reject(error);
+            }
+        );
+        streamifier.createReadStream(fileBuffer).pipe(stream);
+    })
+}
+
+
+server/socket.js:
+const { Server } = require('socket.io');
+const { createAdapter } = require('@socket.io/redis-adapter');
+const { pubClient, subClient } = require('../config/socketRedis');
+const { v4: uuidv4 } = require('uuid');
+const redisClient = require('../config/redis');
+let io;
+const onlineUsers = new Map(); // fallback in-memory map
+
+const initSocket = (server) => {
+    io = new Server(server, {
+        cors: {
+            origin: "*",
+        },
+    });
+
+    io.adapter(createAdapter(pubClient, subClient));
+
+    io.on('connection', (socket) => {
+        console.log(`Connected: ${socket.id}`);
+
+        // ✅ USER JOIN
+        socket.on('join', async (userId) => {
+            userId = String(userId);
+            socket.join(userId);
+
+            await redisClient.set(`online:${userId}`, socket.id);
+            onlineUsers.set(userId, socket.id);
+
+            console.log(`User ${userId} online`);
+
+            // ✅ LOAD CHAT HISTORY
+            const result = await require("../db").query(
+                `SELECT * FROM messages 
+                 WHERE sender_id = $1 OR receiver_id = $1
+                 ORDER BY created_at ASC`,
+                [userId]
+            );
+
+            socket.emit("chat_history", result.rows);
+
+            // ✅ DELIVER PENDING MESSAGES (sent OR delivered)
+            const pending = await require("../db").query(
+                `SELECT * FROM messages 
+                 WHERE receiver_id = $1 AND status IN ('sent', 'delivered')
+                 ORDER BY created_at ASC`,
+                [userId]
+            );
+
+            for (let msg of pending.rows) {
+                // Send to receiver
+                socket.emit("receive_message", {
+                    messageId: msg.id,
+                    from: msg.sender_id,
+                    message: msg.message,
+                });
+
+                // Mark delivered if needed
+                if (msg.status === "sent") {
+                    await require("../db").query(
+                        `UPDATE messages SET status='delivered' WHERE id=$1`,
+                        [msg.id]
+                    );
+
+                    io.to(String(msg.sender_id)).emit("message_delivered", {
+                        messageId: msg.id
+                    });
+                }
+
+                // ✅ MARK SEEN if receiver is online
+                await require("../db").query(
+                    `UPDATE messages SET status='seen' WHERE id=$1`,
+                    [msg.id]
+                );
+
+                // Emit to sender AND receiver so both see "seen" instantly
+                io.to(String(msg.sender_id)).emit("message_seen", {
+                    messageId: msg.id
+                });
+                socket.emit("message_seen", {
+                    messageId: msg.id
+                });
+            }
+        });
+
+        // ✅ SEND MESSAGE
+        socket.on('send_message', async (data, callback) => {
+            const { to, from, message } = data;
+            const senderId = String(from);
+            const receiverId = String(to);
+            const messageId = uuidv4();
+
+            // Save message as sent
+            await require("../db").query(
+                `INSERT INTO messages (id, sender_id, receiver_id, message, status)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                [messageId, senderId, receiverId, message, "sent"]
+            );
+
+            // Sender sees instantly
+            socket.emit('message_sent', {
+                messageId,
+                to: receiverId,
+                message
+            });
+
+            // STEP 2: deliver only if receiver online
+            const receiverSocketId = await redisClient.get(`online:${receiverId}`) || onlineUsers.get(receiverId);
+
+            if (receiverSocketId) {
+                io.to(receiverSocketId).emit('receive_message', {
+                    messageId,
+                    from: senderId,
+                    message
+                });
+
+                // Mark delivered in DB
+                await require("../db").query(
+                    `UPDATE messages SET status='delivered' WHERE id=$1`,
+                    [messageId]
+                );
+
+                // Notify sender of delivery
+                io.to(senderId).emit("message_delivered", { messageId });
+            }
+        });
+
+        // ✅ MESSAGE SEEN
+        socket.on('message_seen', async ({ messageId }) => {
+            const result = await require("../db").query(
+                `UPDATE messages SET status='seen' WHERE id=$1 RETURNING sender_id, receiver_id`,
+                [messageId]
+            );
+
+            const senderId = String(result.rows[0]?.sender_id);
+            const receiverId = String(result.rows[0]?.receiver_id);
+            if (!senderId || !receiverId) return;
+
+            // Emit to both sender AND receiver for real-time sync
+            io.to(senderId).emit("message_seen", { messageId });
+            io.to(receiverId).emit("message_seen", { messageId });
+        });
+
+        // ✅ TYPING INDICATOR
+        socket.on('typing', ({ to, from }) => {
+            io.to(String(to)).emit('typing', { from });
+        });
+
+        // ✅ DISCONNECT
+        socket.on('disconnect', async () => {
+            console.log("User disconnected:", socket.id);
+            for (let [userId, sockId] of onlineUsers.entries()) {
+                if (sockId === socket.id) {
+                    await redisClient.del(`online:${userId}`);
+                    onlineUsers.delete(userId);
+                    break;
+                }
+            }
+        });
+    });
+
+    return io;
+};
+
+module.exports = { initSocket };
+
+
+routes/user_routes.js:
+const express = require('express');
+const router = express.Router();
+const controller = require('../controllers/userController');
+const authMiddleware = require('../middleware/auth');
+const { rateLimiter } = require('../middleware/rateLimiter');
+
+// Routes...
+
+router.get('/', controller.login);
+router.post('/', controller.register);
+router.get('/me', authMiddleware, rateLimiter, controller.userInfo);
+router.get('/all', authMiddleware, rateLimiter, controller.getUsers);
+
+module.exports = router;
+
+
+router/upload_routes.js:
+const express = require('express');
+const router = express.Router();
+const upload = require('../middleware/upload');
+const {uploadImage} = require('../controllers/uploadController');
+const AuthMid = require('../middleware/auth');
+const { rateLimiterUpload } = require('../middleware/rateLimiterUpload');
+
+router.post('/', AuthMid, rateLimiterUpload, upload.single('image'), uploadImage);
+module.exports = router;
+
+
+queue/connection.js:
+const IORedis = require('ioredis');
+
+const connection = new IORedis({
+    host: '127.0.0.1',
+    port: 6379,
+    maxRetriesPerRequest: null,
+})
+
+module.exports = connection;
+queue/email_queue.js:
+const {Queue} = require('bullmq');
+const connection = require('../queue/connection');
+
+const emailQueue = new Queue('emailQueue', {
+    connection
+});
+
+module.exports = emailQueue;
+
+queue/image_queue.js:
+const {Queue} = require('bullmq');
+const connection = require('./connection');
+
+const imageQueue = new Queue('imageQueue', {
+    connection, 
+    defaultJobOptions: {
+        attempts: 3, // so job can be retried.
+        backoff: {
+            type: 'exponential', // retry delay grows exponentially.
+            delay: 2000, // base delay.
+        },
+        removeOnComplete: true, 
+        removeOnFail: false, // keeping not working jobs for debugging.
+    },
+});
+
+module.exports = imageQueue;
+
+
+middleware/auth.js:
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
+
+module.exports = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (authHeader == null) {
+        console.log("INSIDE");
+        return res.status(401).json({ success: false, message: "No Token" });
+    }
+
+    const token = authHeader.startsWith('Bearer ')
+        ? authHeader.split(' ')[1]
+        : authHeader;
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        req.user = decoded;
+        next();
+    } catch (err) {
+        return res.status(404).json({ success: false, message: "Invalid Token" });
+    }
+
+}
+
+ middleware/ratelimiter.js:
+const redisClient = require('../config/redis');
+const memoryStore = new Map();
+const LIMIT = 10;
+const WINDOW = 60;
+
+exports.rateLimiter = async (req, res, next) => {
+    const userId = req.user?.id || req.ip;
+    const key = `rate:${userId}`;
+    try {
+
+        const requests = await redisClient.incr(key);
+        if(requests === 1) {
+            await redisClient.expire(key, WINDOW);
+        }
+
+        if(requests > LIMIT) {
+            return res.status(429).json({
+                success: false,
+                message: "Too many requests. Try again later."
+            })
+        }
+        return next();
+    } catch (error) {
+        console.error("Rate Limiter Error: Redis down using memory fallback", error);
+
+        // fallback
+        const now = Date.now();
+        const window = 60 * 1000;
+
+        if (!memoryStore.has(key)) {
+            memoryStore.set(key, { count: 1, start: now });
+            return next();
+        }
+
+        const data = memoryStore.get(key);
+
+        if (now - data.start > window) {
+            memoryStore.set(key, { count: 1, start: now });
+            return next();
+        }
+
+        data.count++;
+
+        if (data.count > 100) {
+            return res.status(429).json({ message: "Too many requests (fallback)" });
+        }
+
+        next();
+    }
+}
+
+
+middleware/ratelimiterUpload.js:
+ const redisClient = require('../config/redis');
+const memoryStore = new Map();
+const LIMIT = 5;
+const WINDOW = 60;
+
+exports.rateLimiterUpload = async (req, res, next) => {
+    const userId = req.user?.id || req.ip;
+    const redisKey = `rateUpload:${userId}`
+    try {
+
+        const requests = await redisClient.incr(redisKey);
+        if(requests === 1) {
+            await redisClient.expire(redisKey, WINDOW);
+        }
+
+        if(requests > LIMIT) {
+            return res.status(429).json({
+                success: false,
+                message: "Too many uploads in 1 minute. Try again after 1 min."
+            });
+        }
+        return next();
+    } catch (err) {
+        console.error("Upload Rate Limiter Error: Redis down", err);
+        
+        // fallback
+        const now = Date.now();
+        const window = 60 * 1000;
+
+        if (!memoryStore.has(key)) {
+            memoryStore.set(key, { count: 1, start: now });
+            return next();
+        }
+
+        const data = memoryStore.get(key);
+
+        if (now - data.start > window) {
+            memoryStore.set(key, { count: 1, start: now });
+            return next();
+        }
+
+        data.count++;
+
+        if (data.count > 100) {
+            return res.status(429).json({ message: "Too many requests (fallback)" });
+        }
+        next();
+    }
+}
+
+middleware/upload.js:
+const multer = require('multer');
+const storage  = multer.memoryStorage();
+const allowedTypes = ['image/jpeg', 'image']
+
+const upload = multer({
+    storage,
+    limits: {fileSize: 5*1024*1024} // 5 MB,
+});
+
+module.exports = upload
+
+
+
+
+controllers/uploadController.js:
+// const { uploadToCloudinary } = require('../services/upload_service');
+// const pool = require('../db');
+const imageQueue = require('../queue/image_queue');
+const crypto = require('crypto');
+
+exports.uploadImage = async (req, res) => {
+    const jobId = crypto.createHash('sha256').update(req.user.id + req.file.originalname).digest('hex');
+    await imageQueue.add('processImage', {
+        userId: req.user.id,
+        file: req.file.buffer.toString('base64')
+    }, {
+        jobId
+    });
+
+
+    res.json({
+        success: true,
+        message: "Image upload queued"
+    })
+}
+
+// exports.uploadImage = async (req, res) => {
+//     try {
+//         if (!req.file) {
+//             return res.status(400).json({
+//                 success: false,
+//                 message: "No File uploaded"
+//             });
+//         }
+
+//         const result = await uploadToCloudinary(req.file.buffer);
+
+//         await pool.query(
+//             `UPDATE users SET profile_image = $1 WHERE id = $2`,
+//             [result.secure_url.replace('/upload', '/upload/q_auto,f_auto/'), req.user.id]
+//         );
+
+//         res.json({
+//             success: true,
+//             url: result.secure_url.replace('/upload', '/upload/q_auto,f_auto/'),
+//         })
+
+//     } catch (err) {
+//         console.error(err);
+//         res.status(500).json({
+//             success: false,
+//         })
+//     }
+// };
+
+controllers/userController.js:
+const pool = require('../db');
+const asyncHandler = require('../utils/asyncHandler');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+require('dotenv').config();
+const redisClient = require('../config/redis');
+const emailQueue = require('../queue/email_queue');
+
+// CREATE USER Register.
+exports.register = asyncHandler(async (req, res) => {
+    const { name, email, password } = req.body;
+
+    if (!name || !email || !password) {
+        return res.status(400).json({ success: false });
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const result = await pool.query(`
+        INSERT INTO users (name, email, password)
+        VALUES ($1, $2, $3)
+        RETURNING id, name, email
+    `, [name, normalizedEmail, hashedPassword]);
+
+    // 🔥 Invalidate caches
+    try {
+        await redisClient.flushAll(); // clear full cache
+    } catch (err) {
+        console.error("Redis DEL failed:", err);
+    }
+    
+    const user = result.rows[0];
+    await emailQueue.add('sendWelcomeEmail', {
+        email: user.email,
+        name: user.name,
+    })
+
+    res.status(201).json({
+        success: true,
+        data: result.rows[0],
+    });
+});
+
+
+// LOGIN
+exports.login = asyncHandler(async (req, res) => {
+    const { email, password } = req.body;
+
+    const result = await pool.query( // Already Used Indexing in DB for faster lookups.
+        `SELECT * FROM users WHERE email = $1`,
+        [email.toLowerCase().trim()]
+    );
+
+    if (result.rows.length === 0) {
+        return res.status(401).json({ success: false, message: 'Invalid Email' });
+    }
+
+    const user = result.rows[0];
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if (!isMatch) {
+        return res.status(401).json({ success: false, message: 'Invalid Password' });
+    }
+
+    const token = jwt.sign(
+        { id: user.id },
+        process.env.JWT_SECRET,
+        { expiresIn: '1h' }
+    );
+
+    res.json({
+        success: true,
+        token,
+    });
+});
+
+
+// GET SINGLE USER INFO (with Redis)
+exports.userInfo = asyncHandler(async (req, res) => {
+    const userId = req.user.id;
+    const cacheKey = `user:${userId}`;
+
+    let cachedData;
+
+    try {
+        cachedData = await redisClient.get(cacheKey);
+    } catch (err) {
+        console.error("Redis GET failed:", err);
+    }
+
+    if (cachedData) {
+        return res.json({
+            success: true,
+            data: JSON.parse(cachedData),
+            source: "cache"
+        });
+    }
+
+    const result = await pool.query(
+        'SELECT id, name, email FROM users WHERE id = $1',
+        [userId]
+    );
+
+    const user = result.rows[0];
+
+    // 🔥 Cache this user
+    try {
+        await redisClient.setEx(cacheKey, 300, JSON.stringify(user));
+    } catch (err) {
+        console.error("Redis SET failed:", err);
+    }
+
+    res.json({
+        success: true,
+        data: user,
+        source: "db"
+    });
+});
+
+
+// GET ALL USERS (with Redis)
+exports.getUsers = asyncHandler(async (req, res) => {
+    const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+    const cursor = parseInt(req.query.cursor) || 0;
+
+    const cacheKey = `users:${req.user.id}:cursor:${cursor}:limit:${limit}`;
+
+    let cachedData;
+
+    try {
+        cachedData = await redisClient.get(cacheKey);
+    } catch (err) {
+        console.error("Redis GET failed:", err);
+    }
+
+    if (cachedData) {
+        return res.status(200).json({
+            success: true,
+            data: JSON.parse(cachedData),
+            source: "cache"
+        });
+    }
+
+    const result = await pool.query(
+        `SELECT id, name, email, created_at FROM users WHERE id > $1 ORDER BY id LIMIT $2`,
+        [cursor, limit]
+    );
+
+    const users = result.rows;
+
+    // 🔥 Cache list
+    try {
+        await redisClient.setEx(cacheKey, 120, JSON.stringify(users));
+    } catch (err) {
+        console.error("Redis SET failed:", err);
+    }
+
+    res.json({
+        success: true,
+        data: users,
+        nextCursor: users.length ? users[users.length -1].id : null,
+        source: "db"
+    });
+});
+
+
+config/cloudinary.js:
+const cloudinary = require('cloudinary').v2;
+
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+})
+
+module.exports = cloudinary;
+
+
+config/redis.js:
+const { createClient } = require('redis');
+
+const client = createClient({
+  url: process.env.REDIS_URL, // IMPORTANT
+});
+
+client.on('error', (err) => {
+  console.error('Redis error:', err);
+});
+
+(async () => {
+  try {
+    await client.connect();
+    console.log('✅ Redis connected');
+  } catch (err) {
+    console.error('❌ Redis connection failed:', err);
+  }
+})();
+
+module.exports = client;
+
+config/socketredis.js:
+const {createClient} = require('redis');
+
+const pubClient = createClient({
+    url: process.env.REDIS_URL,
+});
+
+const subClient = pubClient.duplicate();
+
+(async () => {
+    await pubClient.connect();
+    await subClient.connect();
+    console.log("Socket Redis Connected");
+})();
+
+module.exports = {pubClient, subClient};
+
+
+So, this is the system till now, we have to implement 1-1 proper chats scale this system to 1M+ users, 
+And also, 1-1 means proper 1-1 end to end encrypted messaging, and seperating global chat to 1-1 chats, 
+currently it is kind of global, chat, anyone can see it, right, we don't want this.
+A full production grade system we have to make 
+
+we must remember the goal becoming a job ready backend engineer in 2-3 months, 
+The top 5% backend engineer, by focusing on one thing.
+we have to become the best of best so recruiters call me, I get calls, 
+I get a 10LPA + job in 2-3 months we have a total limit of 6 months, inside that we need a job>
+Really, we have to make 2-3 projects fully scalable, concurrency and scalability, 
+Like being ready for google FAANG companies, bro you know the goal

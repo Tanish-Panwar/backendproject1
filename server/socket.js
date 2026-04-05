@@ -1,9 +1,10 @@
 const { Server } = require('socket.io');
-const {createAdapter} = require('@socket.io/redis-adapter');
-const {pubClient, subClient} = require('../config/socketRedis');
+const { createAdapter } = require('@socket.io/redis-adapter');
+const { pubClient, subClient } = require('../config/socketRedis');
+const { v4: uuidv4 } = require('uuid');
 const redisClient = require('../config/redis');
 let io;
-const onlineUsers = new Map(); // Now temporary fallback;
+const onlineUsers = new Map(); // fallback in-memory map
 
 const initSocket = (server) => {
     io = new Server(server, {
@@ -17,46 +18,138 @@ const initSocket = (server) => {
     io.on('connection', (socket) => {
         console.log(`Connected: ${socket.id}`);
 
+        // ✅ USER JOIN
         socket.on('join', async (userId) => {
-            await redisClient.set(`online:${userId}`, socket.id); // main save
-            onlineUsers.set(userId, socket.id) // fallback save.
-            console.log(`User ${userId} online`);
-        })
+            userId = String(userId);
+            socket.join(userId);
 
-        socket.on('send_message', async (data) => {
-            const {to, from, message} = data;
-            await require("../db").query(
-                `INSERT INTO messages (sender_id, receiver_id, message) VALUES ($1, $2, $3)`,
-                [from, to, message]
+            await redisClient.set(`online:${userId}`, socket.id);
+            onlineUsers.set(userId, socket.id);
+
+            console.log(`User ${userId} online`);
+
+            // ✅ LOAD CHAT HISTORY
+            const result = await require("../db").query(
+                `SELECT * FROM messages 
+                 WHERE sender_id = $1 OR receiver_id = $1
+                 ORDER BY created_at ASC`,
+                [userId]
             );
-            let receiverSocketId = await redisClient.get(`online:${to}`);
-            if(!receiverSocketId) {
-                receiverSocketId = onlineUsers.get(to); // fallback.
-            }
-            if(receiverSocketId) {
-                
-                io.to(receiverSocketId).emit('receive_message', {
-                    from, 
-                    message,
+
+            socket.emit("chat_history", result.rows);
+
+            // ✅ DELIVER PENDING MESSAGES (sent OR delivered)
+            const pending = await require("../db").query(
+                `SELECT * FROM messages 
+                 WHERE receiver_id = $1 AND status IN ('sent', 'delivered')
+                 ORDER BY created_at ASC`,
+                [userId]
+            );
+
+            for (let msg of pending.rows) {
+                // Send to receiver
+                socket.emit("receive_message", {
+                    messageId: msg.id,
+                    from: msg.sender_id,
+                    message: msg.message,
+                });
+
+                // Mark delivered if needed
+                if (msg.status === "sent") {
+                    await require("../db").query(
+                        `UPDATE messages SET status='delivered' WHERE id=$1`,
+                        [msg.id]
+                    );
+
+                    io.to(String(msg.sender_id)).emit("message_delivered", {
+                        messageId: msg.id
+                    });
+                }
+
+                // ✅ MARK SEEN if receiver is online
+                await require("../db").query(
+                    `UPDATE messages SET status='seen' WHERE id=$1`,
+                    [msg.id]
+                );
+
+                // Emit to sender AND receiver so both see "seen" instantly
+                io.to(String(msg.sender_id)).emit("message_seen", {
+                    messageId: msg.id
+                });
+                socket.emit("message_seen", {
+                    messageId: msg.id
                 });
             }
         });
 
-        socket.on('typing', async ({to, from}) => {
-            let receiverSocketId = await redisClient.get(`online:${to}`);
-            if(!receiverSocketId) {
-                receiverSocketId = onlineUsers.get(to);
-            }
-            if(receiverSocketId) {
-                io.to(receiverSocketId).emit('typing', {from});
+        // ✅ SEND MESSAGE
+        socket.on('send_message', async (data, callback) => {
+            const { to, from, message } = data;
+            const senderId = String(from);
+            const receiverId = String(to);
+            const messageId = uuidv4();
+
+            // Save message as sent
+            await require("../db").query(
+                `INSERT INTO messages (id, sender_id, receiver_id, message, status)
+                 VALUES ($1, $2, $3, $4, $5)`,
+                [messageId, senderId, receiverId, message, "sent"]
+            );
+
+            // Sender sees instantly
+            socket.emit('message_sent', {
+                messageId,
+                to: receiverId,
+                message
+            });
+
+            // STEP 2: deliver only if receiver online
+            const receiverSocketId = await redisClient.get(`online:${receiverId}`) || onlineUsers.get(receiverId);
+
+            if (receiverSocketId) {
+                io.to(receiverSocketId).emit('receive_message', {
+                    messageId,
+                    from: senderId,
+                    message
+                });
+
+                // Mark delivered in DB
+                await require("../db").query(
+                    `UPDATE messages SET status='delivered' WHERE id=$1`,
+                    [messageId]
+                );
+
+                // Notify sender of delivery
+                io.to(senderId).emit("message_delivered", { messageId });
             }
         });
 
-        socket.on('disconnect', async () => {
-            console.log("User disconnected: ", socket.id);
+        // ✅ MESSAGE SEEN
+        socket.on('message_seen', async ({ messageId }) => {
+            const result = await require("../db").query(
+                `UPDATE messages SET status='seen' WHERE id=$1 RETURNING sender_id, receiver_id`,
+                [messageId]
+            );
 
-            for(let [userId, sockId] of onlineUsers.entries()) {
-                if(sockId === socket.id) {
+            const senderId = String(result.rows[0]?.sender_id);
+            const receiverId = String(result.rows[0]?.receiver_id);
+            if (!senderId || !receiverId) return;
+
+            // Emit to both sender AND receiver for real-time sync
+            io.to(senderId).emit("message_seen", { messageId });
+            io.to(receiverId).emit("message_seen", { messageId });
+        });
+
+        // ✅ TYPING INDICATOR
+        socket.on('typing', ({ to, from }) => {
+            io.to(String(to)).emit('typing', { from });
+        });
+
+        // ✅ DISCONNECT
+        socket.on('disconnect', async () => {
+            console.log("User disconnected:", socket.id);
+            for (let [userId, sockId] of onlineUsers.entries()) {
+                if (sockId === socket.id) {
                     await redisClient.del(`online:${userId}`);
                     onlineUsers.delete(userId);
                     break;
@@ -64,8 +157,8 @@ const initSocket = (server) => {
             }
         });
     });
+
     return io;
-}
+};
 
-
-module.exports = {initSocket};
+module.exports = { initSocket };

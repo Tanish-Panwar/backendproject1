@@ -27,15 +27,15 @@ exports.rateLimiterUpload = async (req, res, next) => {
         const now = Date.now();
         const window = 60 * 1000;
 
-        if (!memoryStore.has(key)) {
-            memoryStore.set(key, { count: 1, start: now });
+        if (!memoryStore.has(redisKey)) {
+            memoryStore.set(redisKey, { count: 1, start: now });
             return next();
         }
 
-        const data = memoryStore.get(key);
+        const data = memoryStore.get(redisKey);
 
         if (now - data.start > window) {
-            memoryStore.set(key, { count: 1, start: now });
+            memoryStore.set(redisKey, { count: 1, start: now });
             return next();
         }
 
