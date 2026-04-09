@@ -21,19 +21,23 @@ const express = require('express');
 const http = require('http');
 const router = require('./routes/userRoutes');
 const uploadRouter = require('./routes/uploadRoutes');
+const chatRouter = require('./routes/chatRoutes');
 const logger = require('./middleware/logger');
 const errorHandler = require('./middleware/errorHandler');
 const {initSocket} = require('./server/socket');
 const app = express();
 const server = http.createServer(app);
+const cors = require('cors');
 
 initSocket(server);
 
 app.use(express.json());
 app.use(logger);
+app.use(cors());
 
 app.use('/users', router);
 app.use('/upload', uploadRouter);
+app.use('/chat', chatRouter);
 
 app.use(errorHandler);
 

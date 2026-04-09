@@ -25,11 +25,13 @@ exports.register = asyncHandler(async (req, res) => {
 
     // 🔥 Invalidate caches
     try {
-        await redisClient.flushAll(); // clear full cache
+        // await redisClient.flushAll(); // clear full cache
+        await redisClient.del(`user:${user.id}`);
+        await redisClient.del(`chatlist:${user.id}`);
     } catch (err) {
         console.error("Redis DEL failed:", err);
     }
-    
+
     const user = result.rows[0];
     await emailQueue.add('sendWelcomeEmail', {
         email: user.email,
@@ -159,7 +161,7 @@ exports.getUsers = asyncHandler(async (req, res) => {
     res.json({
         success: true,
         data: users,
-        nextCursor: users.length ? users[users.length -1].id : null,
+        nextCursor: users.length ? users[users.length - 1].id : null,
         source: "db"
     });
 });

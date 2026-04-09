@@ -6,7 +6,7 @@ const { rateLimiter } = require('../middleware/rateLimiter');
 
 // Routes...
 
-router.get('/', controller.login);
+router.post('/', controller.login);
 router.post('/', controller.register);
 router.get('/me', authMiddleware, rateLimiter, controller.userInfo);
 router.get('/all', authMiddleware, rateLimiter, controller.getUsers);

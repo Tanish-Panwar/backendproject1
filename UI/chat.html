@@ -22,6 +22,8 @@
             flex: 1;
             overflow-y: auto;
             padding: 10px;
+            display: flex;
+            flex-direction: column;
         }
 
         .message {
@@ -29,7 +31,6 @@
             margin: 5px;
             border-radius: 10px;
             max-width: 70%;
-            position: relative;
             font-size: 14px;
         }
 
@@ -90,13 +91,25 @@
     <script src="https://cdn.socket.io/4.8.3/socket.io.min.js"></script>
 
     <script>
-        const socket = io("http://localhost:3000");
-        const userId = prompt("Enter your userId");
+        const token = localStorage.getItem("token");
+
+        // 🔥 Decode JWT (simple way)
+        const userId = JSON.parse(atob(token.split('.')[1])).id;
+        console.log("Logged in as:", userId);
+
+        const socket = io("http://localhost:3000", {
+            auth: { token }
+        });
 
         const messagesMap = new Map();
 
         socket.on("connect", () => {
-            socket.emit("join", userId);
+            console.log("Connected:", socket.id);
+            socket.emit("join");
+        });
+
+        socket.on("connect_error", (err) => {
+            console.error("Connection failed:", err.message);
         });
 
         function getStatusSymbol(status) {
@@ -116,20 +129,19 @@
             const div = document.createElement("div");
             div.className = `message ${type}`;
             div.dataset.status = status;
-            div.id = `msg-${id}`;
 
             const msgText = document.createElement("div");
             msgText.innerText = text;
 
             const statusDiv = document.createElement("div");
             statusDiv.className = "status";
-            statusDiv.style.color = getStatusColor(status);
             statusDiv.innerText = getStatusSymbol(status);
+            statusDiv.style.color = getStatusColor(status);
 
             div.appendChild(msgText);
             div.appendChild(statusDiv);
 
-            messagesMap.set(id, { div, statusDiv, type });
+            messagesMap.set(id, { div, statusDiv });
 
             document.getElementById("chatBox").appendChild(div);
             scrollToBottom();
@@ -157,19 +169,28 @@
             if (!msg || !to) return;
 
             socket.emit("send_message", {
-                from: userId,
                 to,
                 message: msg
+            }, (ack) => {
+                console.log("ACK:", ack);
             });
 
             document.getElementById("msg").value = "";
         }
 
+        let typingTimeout;
+
         function sendTyping() {
             const to = document.getElementById("to").value;
             if (!to) return;
 
-            socket.emit("typing", { from: userId, to });
+            if (typingTimeout) return;
+
+            socket.emit("typing", { to });
+
+            typingTimeout = setTimeout(() => {
+                typingTimeout = null;
+            }, 500); // one typing event per 500ms max
         }
 
         function scrollToBottom() {
@@ -178,7 +199,10 @@
         }
 
         // ✅ SOCKET EVENTS
+
         socket.on("message_sent", (data) => {
+            console.log("Sent:", data);
+
             addMessage({
                 id: data.messageId,
                 text: data.message,
@@ -188,6 +212,8 @@
         });
 
         socket.on("receive_message", (data) => {
+            console.log("Received:", data);
+
             addMessage({
                 id: data.messageId,
                 text: `${data.from}: ${data.message}`,
@@ -195,37 +221,51 @@
                 type: "received"
             });
 
-            // ✅ mark seen immediately (simulate user reading)
+            // auto mark seen
             socket.emit("message_seen", { messageId: data.messageId });
         });
 
-        socket.on("message_delivered", (data) => updateMessageStatus(data.messageId, "delivered"));
-        socket.on("message_seen", (data) => updateMessageStatus(data.messageId, "seen"));
-
-        socket.on("chat_history", (messages) => {
-            const chatBox = document.getElementById("chatBox");
-            chatBox.innerHTML = "";
-            messagesMap.clear();
-
-            messages
-                .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
-                .forEach(msg => {
-                    addMessage({
-                        id: msg.id,
-                        text: msg.sender_id === userId ? msg.message : `${msg.sender_id}: ${msg.message}`,
-                        status: msg.status,
-                        type: msg.sender_id === userId ? "sent" : "received"
-                    });
-                });
+        socket.on("message_delivered", (data) => {
+            console.log("Delivered:", data);
+            updateMessageStatus(data.messageId, "delivered");
         });
+
+        socket.on("message_seen", (data) => {
+            console.log("Seen:", data);
+            updateMessageStatus(data.messageId, "seen");
+        });
+
+        // socket.on("chat_history", (messages) => {
+        //     console.log("History:", messages);
+
+        //     const chatBox = document.getElementById("chatBox");
+        //     chatBox.innerHTML = "";
+        //     messagesMap.clear();
+
+        //     messages.forEach(msg => {
+        //         addMessage({
+        //             id: msg.id,
+        //             text: msg.sender_id == userId ? msg.message : `${msg.sender_id}: ${msg.message}`,
+        //             status: msg.status,
+        //             type: msg.sender_id == userId ? "sent" : "received"
+        //         });
+        //     });
+        // });
+
+        // let typingTimeout;
 
         socket.on("typing", (data) => {
             const typingDiv = document.getElementById("typing");
+
             typingDiv.innerText = `User ${data.from} is typing...`;
 
-            setTimeout(() => {
+            // ✅ clear previous timeout
+            if (typingTimeout) clearTimeout(typingTimeout);
+
+            // ✅ set new timeout
+            typingTimeout = setTimeout(() => {
                 typingDiv.innerText = "";
-            }, 1000);
+            }, 1500);
         });
     </script>
 

@@ -1,7 +1,7 @@
 const pool = require('../db');
 const {v4: uuidv4} = require('uuid');
 
-expprts.getOrCreateConversation = async (user1, user2) => {
+exports.getOrCreateConversation = async (user1, user2) => {
     const u1 = Math.min(user1, user2);
     const u2 = Math.max(user1, user2);
 
